@@ -3,6 +3,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
+const QRCode = require('qrcode');
 const path = require('path');
 const crypto = require('crypto');
 const config = require('./config');
@@ -123,6 +124,11 @@ Object.entries(roleDashboards).forEach(([role, dashboard]) => {
   app.get(getDashboardPath(role), requireAuth, requirePermission(dashboard.navigation[0][2]), renderRoleDashboard);
 });
 
+app.get('/workspace/attendance/scan', requireAuth, requirePermission('attendance.view'), (req, res) => {
+  const selected = encodeURIComponent(req.query.studentId || '');
+  res.redirect(`/workspace/attendance?studentId=${selected}`);
+});
+
 app.get('/workspace/*', requireAuth, async (req, res, next) => {
   const workspace = req.params[0];
   const permissionByWorkspace = {
@@ -165,7 +171,11 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
     if (workspace === 'attendance' || workspace === 'my-attendance') {
       const result = await query(`SELECT a.attendance_date, a.status, s.full_name, s.student_number FROM attendance a JOIN students s ON s.id = a.student_id WHERE a.organization_id = $1 ORDER BY a.attendance_date DESC, s.full_name LIMIT 100`, [organizationId]);
       const students = await query('SELECT id, full_name, student_number FROM students WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY full_name', [organizationId]);
-      return { records: result.rows, students: students.rows };
+      const studentQrCodes = await Promise.all(students.rows.map(async (student) => ({
+        ...student,
+        qrCode: await QRCode.toDataURL(`${config.appUrl}/workspace/attendance/scan?studentId=${student.id}`, { margin: 1, width: 128 }),
+      })));
+      return { records: result.rows, students: students.rows, studentQrCodes };
     }
     if (workspace === 'finance' || workspace === 'invoices' || workspace === 'outstanding-balances') {
       const result = await query(`SELECT i.invoice_number, i.description, i.amount, i.balance, i.status, s.full_name FROM invoices i LEFT JOIN students s ON s.id = i.student_id WHERE i.organization_id = $1 ORDER BY i.created_at DESC`, [organizationId]);
@@ -267,9 +277,10 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
   };
   try {
     const data = await loadWorkspace();
-    const specializedWorkspaces = ['assessments', 'grades', 'timetable', 'trips', 'transport-assignments'];
+    const specializedWorkspaces = ['assessments', 'grades', 'timetable', 'trips', 'transport-assignments', 'attendance', 'my-attendance'];
     if (specializedWorkspaces.includes(workspace)) {
-      const titles = { assessments: 'Create assessment', grades: 'Record grade', timetable: 'Add timetable entry', trips: 'Schedule trip', 'transport-assignments': 'Assign student to route' };
+      const titles = { assessments: 'Create assessment', grades: 'Record grade', timetable: 'Add timetable entry', trips: 'Schedule trip', 'transport-assignments': 'Assign student to route', attendance: 'Take attendance', 'my-attendance': 'Take attendance' };
+      if (workspace === 'attendance' || workspace === 'my-attendance') return res.render('attendance-workspace', { workspace, ...data, selectedStudentId: req.query.studentId || '', module: { title: workspace === 'my-attendance' ? 'My attendance' : 'Attendance register', eyebrow: 'DAILY REGISTER', description: 'Record attendance quickly with a student QR code or the manual register.' }, actionTitle: titles[workspace], user: req.session.user, dashboard: roleDashboards[req.session.user.role] || roleDashboards.staff, canAccess });
       return res.render('special-workspace', { workspace, ...data, module: { title: workspace.replaceAll('-', ' '), eyebrow: 'AUTHORIZED WORKSPACE', description: `This workspace is scoped to the ${(req.session.user.roleLabel || 'staff').toLowerCase()} role.` }, actionTitle: titles[workspace], user: req.session.user, dashboard: roleDashboards[req.session.user.role] || roleDashboards.staff, canAccess });
     }
     res.render('module', { workspace, ...data, query: req.query, module: { title: workspace.replaceAll('-', ' '), eyebrow: 'AUTHORIZED WORKSPACE', description: `This workspace is scoped to the ${(req.session.user.roleLabel || 'staff').toLowerCase()} role.` }, user: req.session.user, dashboard: roleDashboards[req.session.user.role] || roleDashboards.staff, canAccess });
