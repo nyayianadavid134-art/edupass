@@ -278,6 +278,49 @@ app.post('/workspace/invitations', requireAuth, requirePermission('users.invite'
   }
 });
 
+app.post('/workspace/:workspace', requireAuth, async (req, res, next) => {
+  const permissions = {
+    'book-categories': 'library.books.manage', books: 'library.books.manage', assignments: 'assignments.manage', events: 'events.view', announcements: 'communication.send', 'my-tasks': 'dashboard.staff', vehicles: 'transport.manage', drivers: 'transport.manage', routes: 'transport.manage',
+  };
+  const permission = permissions[req.params.workspace];
+  if (!permission || !canAccess(req.session.user.role, permission)) return res.status(403).render('forbidden', { user: req.session.user, permission: permission || 'workspace' });
+  const organizationId = req.session.user.organizationId;
+  try {
+    switch (req.params.workspace) {
+      case 'book-categories':
+        await query('INSERT INTO book_categories (organization_id, name) VALUES ($1, $2)', [organizationId, req.body.name.trim()]);
+        break;
+      case 'books':
+        await query('INSERT INTO books (organization_id, title, author, isbn, copies_total, copies_available) VALUES ($1, $2, $3, $4, $5, $5)', [organizationId, req.body.title.trim(), req.body.author || null, req.body.isbn || null, Number(req.body.copiesTotal || 1)]);
+        break;
+      case 'assignments':
+        await query('INSERT INTO assignments (organization_id, created_by, title, description, due_at) VALUES ($1, $2, $3, $4, $5)', [organizationId, req.session.user.id, req.body.title.trim(), req.body.description || null, req.body.dueAt || null]);
+        break;
+      case 'events':
+        await query('INSERT INTO events (organization_id, created_by, title, description, starts_at, location) VALUES ($1, $2, $3, $4, $5, $6)', [organizationId, req.session.user.id, req.body.title.trim(), req.body.description || null, req.body.startsAt, req.body.location || null]);
+        break;
+      case 'announcements':
+        await query('INSERT INTO announcements (organization_id, author_user_id, title, body, audience, published_at) VALUES ($1, $2, $3, $4, $5, now())', [organizationId, req.session.user.id, req.body.title.trim(), req.body.body.trim(), req.body.audience || 'school']);
+        break;
+      case 'my-tasks':
+        await query('INSERT INTO tasks (organization_id, assigned_to, created_by, title, description, due_at) VALUES ($1, $2, $3, $4, $5, $6)', [organizationId, req.body.assignedTo || req.session.user.id, req.session.user.id, req.body.title.trim(), req.body.description || null, req.body.dueAt || null]);
+        break;
+      case 'vehicles':
+        await query('INSERT INTO vehicles (organization_id, registration_number, vehicle_type, capacity) VALUES ($1, $2, $3, $4)', [organizationId, req.body.registrationNumber.trim(), req.body.vehicleType || null, Number(req.body.capacity || 0) || null]);
+        break;
+      case 'drivers':
+        await query('INSERT INTO drivers (organization_id, full_name, phone, licence_number) VALUES ($1, $2, $3, $4)', [organizationId, req.body.fullName.trim(), req.body.phone || null, req.body.licenceNumber || null]);
+        break;
+      case 'routes':
+        await query('INSERT INTO routes (organization_id, name, description) VALUES ($1, $2, $3)', [organizationId, req.body.name.trim(), req.body.description || null]);
+        break;
+      default:
+        return res.status(404).render('error', { message: 'That workspace action does not exist.' });
+    }
+    res.redirect(`/workspace/${req.params.workspace}`);
+  } catch (error) { next(error); }
+});
+
 app.use((error, req, res, next) => {
   console.error(error);
   res.status(500).render('error', { message: 'EduPass could not load this view.' });
