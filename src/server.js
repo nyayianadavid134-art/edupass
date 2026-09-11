@@ -6,7 +6,7 @@ const pgSession = require('connect-pg-simple')(session);
 const path = require('path');
 const crypto = require('crypto');
 const config = require('./config');
-const { checkConnection, pool } = require('./db');
+const { checkConnection, pool, initializeDatabase } = require('./db');
 const { getDashboard } = require('./services/dashboardService');
 const { query } = require('./db');
 const { findUserByEmail, registerSchoolAdmin, createInvitation, findInvitation, acceptInvitation, verifyPassword, getRoleLabel, getDashboardPath, canAccess, requireAuth, requirePermission, roleLabels } = require('./auth');
@@ -203,6 +203,14 @@ app.use((error, req, res, next) => {
   res.status(500).render('error', { message: 'EduPass could not load this view.' });
 });
 
-app.listen(config.port, () => {
-  console.log(`EduPass running at http://localhost:${config.port}`);
+async function start() {
+  await initializeDatabase();
+  app.listen(config.port, () => {
+    console.log(`EduPass running at http://localhost:${config.port}`);
+  });
+}
+
+start().catch((error) => {
+  console.error('EduPass could not start:', error.message);
+  process.exitCode = 1;
 });

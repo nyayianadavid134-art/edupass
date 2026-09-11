@@ -1,4 +1,6 @@
 const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
 const config = require('./config');
 
 if (!config.databaseUrl) {
@@ -22,4 +24,10 @@ async function checkConnection() {
   return true;
 }
 
-module.exports = { pool, query, checkConnection };
+async function initializeDatabase() {
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'database', 'schema.sql'), 'utf8');
+  await query(schema);
+  console.log('EduPass database schema is ready.');
+}
+
+module.exports = { pool, query, checkConnection, initializeDatabase };
