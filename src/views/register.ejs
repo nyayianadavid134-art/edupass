@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EduPass | Register</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/auth.css">
+</head>
+<body class="auth-body">
+  <main class="auth-page">
+    <section class="auth-showcase register-showcase">
+      <a class="brand auth-brand" href="/"><span class="brand-mark">E</span><span>EduPass</span></a>
+      <div class="showcase-copy"><p class="eyebrow auth-eyebrow">SET UP YOUR ACCESS</p><h1>One role.<br><em>Clear access.</em></h1><p>Your role determines the tools, records, and school tasks available in your workspace.</p></div>
+      <div class="role-preview"><span class="preview-check">✓</span><div><strong>Role-based by design</strong><small>Only see what you are responsible for.</small></div></div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-form-wrap register-form-wrap">
+        <div class="mobile-brand"><a class="brand auth-brand" href="/"><span class="brand-mark">E</span><span>EduPass</span></a></div>
+        <p class="eyebrow">JOIN YOUR SCHOOL</p>
+        <h2>Create your access</h2>
+        <p class="auth-copy">Create your school first. EduPass supports primary schools, secondary schools, colleges, universities, and education organizations.</p>
+        <% if (error) { %><div class="form-error" role="alert"><span>!</span><%= error %></div><% } %>
+        <form method="post" action="/register" class="auth-form">
+          <label for="schoolName">School name<input id="schoolName" type="text" name="schoolName" placeholder="e.g. Green Valley Secondary School" required autocomplete="organization"></label>
+          <label for="schoolType">School type<select id="schoolType" name="schoolType" required><option value="" disabled selected>Select your school type</option><% schoolTypes.forEach(function(item) { %><option value="<%= item[0] %>"><%= item[1] %></option><% }); %></select></label>
+          <label for="fullName">Your full name<input id="fullName" type="text" name="fullName" placeholder="e.g. Mary John" required autocomplete="name"></label>
+          <label for="registerEmail">Work email<input id="registerEmail" type="email" name="email" placeholder="you@school.org" required autocomplete="email"></label>
+          <label for="role">Your role<select id="role" name="role" disabled><option selected>School administrator</option></select></label>
+          <label for="registerPassword">Password<input id="registerPassword" type="password" name="password" minlength="8" placeholder="At least 8 characters" required autocomplete="new-password"></label>
+          <button class="button full-button" type="submit">Create role account <span>→</span></button>
+        </form>
+        <p class="auth-switch">Already registered? <a href="/login">Sign in instead</a></p>
+        <p class="auth-legal">Your access is limited to the selected role and school.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

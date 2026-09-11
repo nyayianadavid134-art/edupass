@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EduPass | <%= dashboard.title %></title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">E</span><span>EduPass</span></div>
+      <div class="workspace-label"><%= dashboard.eyebrow %></div>
+      <nav aria-label="Role navigation">
+        <% dashboard.navigation.forEach(function(item) { %>
+          <% if (canAccess(user.role, item[2])) { %>
+            <a class="nav-item <%= item[1] === activePath ? 'active' : '' %>" href="<%= item[1] %>"><span class="nav-dot"></span><%= item[0] %></a>
+          <% } %>
+        <% }); %>
+      </nav>
+      <div class="sidebar-footer"><div class="status-dot"></div><span>Role access active</span></div>
+    </aside>
+    <main class="main-content">
+      <header class="topbar">
+        <div><p class="eyebrow"><%= dashboard.eyebrow %></p><h1><%= dashboard.title %></h1><span class="role-chip"><%= user.roleLabel %></span></div>
+        <div class="top-actions"><div class="avatar"><%= user.fullName.split(' ').map(function(part) { return part[0]; }).slice(0, 2).join('').toUpperCase() %></div><form method="post" action="/logout"><button class="logout-button" type="submit">Sign out</button></form></div>
+      </header>
+      <section class="welcome-band"><div><p class="eyebrow light">AUTHORIZED ROLE WORKSPACE</p><h2><%= dashboard.description %></h2><p><%= school ? school.school_name : 'EduPass school workspace' %></p></div><span class="role-chip light-chip"><%= user.roleLabel %></span></section>
+      <section class="metric-grid" aria-label="Role dashboard metrics">
+        <% dashboard.widgets.forEach(function(widget) { %>
+          <div class="metric-card"><div class="metric-icon green">◌</div><p><%= widget[0] %></p><strong><%= summary[widget[1]] === undefined || summary[widget[1]] === null ? '—' : summary[widget[1]] %></strong><span class="metric-change neutral"><%= widget[2] %></span></div>
+        <% }); %>
+      </section>
+      <section class="content-grid">
+        <div class="panel actions-panel"><div class="panel-heading"><div><p class="eyebrow">ROLE TASKS</p><h3>Quick actions</h3></div></div>
+          <% dashboard.actions.forEach(function(action) { if (canAccess(user.role, action[2])) { %>
+            <a class="action-row" href="<%= action[1] %>"><span class="action-icon green-bg">＋</span><span><strong><%= action[0] %></strong><small>Open authorized workspace</small></span><b>→</b></a>
+          <% } }); %>
+        </div>
+        <div class="panel notice-panel"><div class="notice-symbol">✓</div><div><p class="eyebrow">ACCESS SCOPE</p><h3>Only your assigned work</h3><p>EduPass filters this workspace by role, school, and permission. Restricted modules remain protected on the server.</p><a href="/workspace/profile">Review profile <span>→</span></a></div></div>
+      </section>
+      <section class="panel setup-panel"><div class="panel-heading"><div><p class="eyebrow">YOUR NAVIGATION</p><h3>Available workspaces</h3></div><span class="progress-label"><%= dashboard.navigation.filter(function(item) { return canAccess(user.role, item[2]); }).length %> enabled</span></div><div class="setup-list"><% dashboard.navigation.forEach(function(item) { if (canAccess(user.role, item[2])) { %><div class="setup-item"><span>✓</span><div><strong><%= item[0] %></strong><small><%= item[2] %></small></div><a href="<%= item[1] %>">Open →</a></div><% } }); %></div></section>
+    </main>
+  </div>
+</body>
+</html>

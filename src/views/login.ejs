@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EduPass | Sign in</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/auth.css">
+</head>
+<body class="auth-body">
+  <main class="auth-page">
+    <section class="auth-showcase">
+      <a class="brand auth-brand" href="/"><span class="brand-mark">E</span><span>EduPass</span></a>
+      <div class="showcase-copy"><p class="eyebrow auth-eyebrow">ONE DIGITAL PASS. ONE CONNECTED SCHOOL.</p><h1>Your school,<br><em>in sync.</em></h1><p>One secure place for school operations, identity, attendance, academics, and communication.</p></div>
+      <div class="showcase-footer"><span class="showcase-line"></span><span>Trusted school operations platform</span></div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-form-wrap">
+        <div class="mobile-brand"><a class="brand auth-brand" href="/"><span class="brand-mark">E</span><span>EduPass</span></a></div>
+        <p class="eyebrow">SCHOOL OPERATIONS</p>
+        <h2>Welcome back</h2>
+        <p class="auth-copy">Sign in to continue to your role-specific workspace.</p>
+        <% if (success) { %><div class="form-success" role="status"><span>✓</span><%= success %></div><% } %>
+        <% if (error) { %><div class="form-error" role="alert"><span>!</span><%= error %></div><% } %>
+        <form method="post" action="/login" class="auth-form">
+          <label for="email">Work email<input id="email" type="email" name="email" placeholder="you@school.org" required autocomplete="email"></label>
+          <div class="field-heading"><label for="password">Password</label><span class="field-helper">Use your school account</span></div>
+          <input id="password" type="password" name="password" placeholder="Enter your password" required autocomplete="current-password">
+          <button class="button full-button" type="submit">Sign in <span>→</span></button>
+        </form>
+        <div class="auth-divider"><span>New to EduPass?</span></div>
+        <a class="secondary-button" href="/register">Register your role <span>→</span></a>
+        <p class="auth-legal">By continuing, you agree to your school's access and privacy policies.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
