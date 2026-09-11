@@ -208,9 +208,38 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
       const invoices = await query(`SELECT id, invoice_number, balance FROM invoices WHERE organization_id = $1 AND balance > 0 ORDER BY created_at DESC`, [organizationId]);
       return { records: result.rows, invoices: invoices.rows };
     }
+    if (['my-assignments', 'my-children-assignments'].includes(workspace)) {
+      const parentFilter = workspace === 'my-children-assignments' ? 'JOIN parent_students ps ON ps.organization_id = a.organization_id JOIN students child ON child.id = ps.student_id AND child.class_id = a.class_id WHERE ps.parent_user_id = $2 AND ' : 'WHERE ';
+      const params = workspace === 'my-children-assignments' ? [organizationId, req.session.user.id] : [organizationId];
+      const result = await query(`SELECT DISTINCT a.title, a.description, a.due_at, s.name AS subject_name FROM assignments a LEFT JOIN subjects s ON s.id = a.subject_id ${parentFilter}a.organization_id = $1 ORDER BY a.due_at NULLS LAST, a.created_at DESC`, params);
+      return { records: result.rows };
+    }
+    if (['my-grades', 'my-children-academics'].includes(workspace)) {
+      const parentFilter = workspace === 'my-children-academics' ? 'JOIN parent_students ps ON ps.student_id = g.student_id AND ps.organization_id = g.organization_id WHERE ps.parent_user_id = $2 AND ' : 'WHERE ';
+      const params = workspace === 'my-children-academics' ? [organizationId, req.session.user.id] : [organizationId];
+      const result = await query(`SELECT a.title AS assessment, s.full_name AS student_name, sub.name AS subject_name, g.score, a.max_score, g.feedback FROM grades g JOIN assessments a ON a.id = g.assessment_id JOIN students s ON s.id = g.student_id LEFT JOIN subjects sub ON sub.id = a.subject_id ${parentFilter}g.organization_id = $1 ORDER BY g.created_at DESC LIMIT 100`, params);
+      return { records: result.rows };
+    }
+    if (['my-timetable', 'my-children-timetable'].includes(workspace)) {
+      const parentFilter = workspace === 'my-children-timetable' ? 'JOIN parent_students ps ON ps.organization_id = t.organization_id JOIN students child ON child.id = ps.student_id AND child.class_id = t.class_id WHERE ps.parent_user_id = $2 AND ' : 'WHERE ';
+      const params = workspace === 'my-children-timetable' ? [organizationId, req.session.user.id] : [organizationId];
+      const result = await query(`SELECT DISTINCT t.weekday, t.starts_at, t.ends_at, t.room, c.name AS class_name, s.name AS subject_name FROM timetables t LEFT JOIN classes c ON c.id = t.class_id LEFT JOIN subjects s ON s.id = t.subject_id ${parentFilter}t.organization_id = $1 ORDER BY t.weekday, t.starts_at`, params);
+      return { records: result.rows };
+    }
     if (workspace === 'assignments' || workspace === 'assessments' || workspace === 'grades' || workspace === 'timetable') {
       const table = workspace === 'timetable' ? 'timetables' : workspace;
       const result = await query(`SELECT * FROM ${table} WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100`, [organizationId]);
+      if (workspace === 'assessments') return { records: result.rows, assessments: result.rows };
+      if (workspace === 'grades') {
+        const assessments = await query('SELECT id, title, max_score FROM assessments WHERE organization_id = $1 ORDER BY assessment_date DESC NULLS LAST', [organizationId]);
+        const students = await query('SELECT id, full_name, student_number FROM students WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY full_name', [organizationId]);
+        return { records: result.rows, assessments: assessments.rows, students: students.rows };
+      }
+      if (workspace === 'timetable') {
+        const classes = await query('SELECT id, name FROM classes WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name', [organizationId]);
+        const subjects = await query('SELECT id, name FROM subjects WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name', [organizationId]);
+        return { records: result.rows, classes: classes.rows, subjects: subjects.rows };
+      }
       return { records: result.rows };
     }
     if (workspace === 'events' || workspace === 'announcements' || workspace === 'messages' || workspace === 'my-tasks') {
@@ -221,12 +250,28 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
     if (workspace === 'vehicles' || workspace === 'drivers' || workspace === 'routes' || workspace === 'trips' || workspace === 'transport-assignments') {
       const table = workspace.replace('transport-', '').replace('assignments', 'transport_assignments');
       const result = await query(`SELECT * FROM ${table} WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100`, [organizationId]);
+      if (workspace === 'trips') {
+        const routes = await query('SELECT id, name FROM routes WHERE organization_id = $1 ORDER BY name', [organizationId]);
+        const vehicles = await query('SELECT id, registration_number FROM vehicles WHERE organization_id = $1 ORDER BY registration_number', [organizationId]);
+        const drivers = await query('SELECT id, full_name FROM drivers WHERE organization_id = $1 ORDER BY full_name', [organizationId]);
+        return { records: result.rows, routes: routes.rows, vehicles: vehicles.rows, drivers: drivers.rows };
+      }
+      if (workspace === 'transport-assignments') {
+        const routes = await query('SELECT id, name FROM routes WHERE organization_id = $1 ORDER BY name', [organizationId]);
+        const students = await query('SELECT id, full_name, student_number FROM students WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY full_name', [organizationId]);
+        return { records: result.rows, routes: routes.rows, students: students.rows };
+      }
       return { records: result.rows };
     }
     return { records: [] };
   };
   try {
     const data = await loadWorkspace();
+    const specializedWorkspaces = ['assessments', 'grades', 'timetable', 'trips', 'transport-assignments'];
+    if (specializedWorkspaces.includes(workspace)) {
+      const titles = { assessments: 'Create assessment', grades: 'Record grade', timetable: 'Add timetable entry', trips: 'Schedule trip', 'transport-assignments': 'Assign student to route' };
+      return res.render('special-workspace', { workspace, ...data, module: { title: workspace.replaceAll('-', ' '), eyebrow: 'AUTHORIZED WORKSPACE', description: `This workspace is scoped to the ${(req.session.user.roleLabel || 'staff').toLowerCase()} role.` }, actionTitle: titles[workspace], user: req.session.user, dashboard: roleDashboards[req.session.user.role] || roleDashboards.staff, canAccess });
+    }
     res.render('module', { workspace, ...data, query: req.query, module: { title: workspace.replaceAll('-', ' '), eyebrow: 'AUTHORIZED WORKSPACE', description: `This workspace is scoped to the ${(req.session.user.roleLabel || 'staff').toLowerCase()} role.` }, user: req.session.user, dashboard: roleDashboards[req.session.user.role] || roleDashboards.staff, canAccess });
   } catch (error) {
     next(error);
@@ -291,7 +336,7 @@ app.post('/workspace/invitations', requireAuth, requirePermission('users.invite'
 
 app.post('/workspace/:workspace', requireAuth, async (req, res, next) => {
   const permissions = {
-    'book-categories': 'library.books.manage', books: 'library.books.manage', borrowing: 'library.borrowing.manage', returns: 'library.borrowing.manage', assignments: 'assignments.manage', events: 'events.view', announcements: 'communication.send', 'my-tasks': 'dashboard.staff', vehicles: 'transport.manage', drivers: 'transport.manage', routes: 'transport.manage', payments: 'finance.payments.create', receipts: 'finance.receipts.create',
+    'book-categories': 'library.books.manage', books: 'library.books.manage', borrowing: 'library.borrowing.manage', returns: 'library.borrowing.manage', assignments: 'assignments.manage', assessments: 'assessments.manage', grades: 'grades.manage', timetable: 'timetable.assigned.view', events: 'events.view', announcements: 'communication.send', 'my-tasks': 'dashboard.staff', vehicles: 'transport.manage', drivers: 'transport.manage', routes: 'transport.manage', trips: 'transport.manage', 'transport-assignments': 'transport.manage', payments: 'finance.payments.create', receipts: 'finance.receipts.create',
   };
   const permission = permissions[req.params.workspace];
   if (!permission || !canAccess(req.session.user.role, permission)) return res.status(403).render('forbidden', { user: req.session.user, permission: permission || 'workspace' });
@@ -306,6 +351,15 @@ app.post('/workspace/:workspace', requireAuth, async (req, res, next) => {
         break;
       case 'assignments':
         await query('INSERT INTO assignments (organization_id, created_by, title, description, due_at) VALUES ($1, $2, $3, $4, $5)', [organizationId, req.session.user.id, req.body.title.trim(), req.body.description || null, req.body.dueAt || null]);
+        break;
+      case 'assessments':
+        await query('INSERT INTO assessments (organization_id, created_by, title, assessment_date, max_score) VALUES ($1, $2, $3, $4, $5)', [organizationId, req.session.user.id, req.body.title.trim(), req.body.assessmentDate || null, Number(req.body.maxScore || 100)]);
+        break;
+      case 'grades':
+        await query('INSERT INTO grades (organization_id, assessment_id, student_id, score, feedback, recorded_by) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (assessment_id, student_id) DO UPDATE SET score = EXCLUDED.score, feedback = EXCLUDED.feedback, recorded_by = EXCLUDED.recorded_by', [organizationId, req.body.assessmentId, req.body.studentId, Number(req.body.score), req.body.feedback || null, req.session.user.id]);
+        break;
+      case 'timetable':
+        await query('INSERT INTO timetables (organization_id, class_id, subject_id, teacher_user_id, weekday, starts_at, ends_at, room) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [organizationId, req.body.classId || null, req.body.subjectId || null, req.session.user.id, Number(req.body.weekday), req.body.startsAt, req.body.endsAt, req.body.room || null]);
         break;
       case 'events':
         await query('INSERT INTO events (organization_id, created_by, title, description, starts_at, location) VALUES ($1, $2, $3, $4, $5, $6)', [organizationId, req.session.user.id, req.body.title.trim(), req.body.description || null, req.body.startsAt, req.body.location || null]);
@@ -324,6 +378,12 @@ app.post('/workspace/:workspace', requireAuth, async (req, res, next) => {
         break;
       case 'routes':
         await query('INSERT INTO routes (organization_id, name, description) VALUES ($1, $2, $3)', [organizationId, req.body.name.trim(), req.body.description || null]);
+        break;
+      case 'transport-assignments':
+        await query('INSERT INTO transport_assignments (organization_id, route_id, student_id) VALUES ($1, $2, $3)', [organizationId, req.body.routeId, req.body.studentId]);
+        break;
+      case 'trips':
+        await query('INSERT INTO trips (organization_id, route_id, vehicle_id, driver_id, trip_date, status) VALUES ($1, $2, $3, $4, $5, $6)', [organizationId, req.body.routeId || null, req.body.vehicleId || null, req.body.driverId || null, req.body.tripDate, req.body.status || 'scheduled']);
         break;
       case 'borrowing':
         await query('INSERT INTO book_loans (organization_id, book_id, borrower_student_id, issued_by, due_at) VALUES ($1, $2, $3, $4, $5)', [organizationId, req.body.bookId, req.body.studentId, req.session.user.id, req.body.dueAt]);
