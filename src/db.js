@@ -1,6 +1,10 @@
 const { Pool } = require('pg');
 const config = require('./config');
 
+if (!config.databaseUrl) {
+  throw new Error('DATABASE_URL is required. Add the Render PostgreSQL connection string to the service environment.');
+}
+
 const pool = new Pool({
   connectionString: config.databaseUrl,
   ssl: config.databaseSsl ? { rejectUnauthorized: false } : undefined,

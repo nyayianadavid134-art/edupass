@@ -2,10 +2,11 @@ const express = require('express');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
 const path = require('path');
 const crypto = require('crypto');
 const config = require('./config');
-const { checkConnection } = require('./db');
+const { checkConnection, pool } = require('./db');
 const { getDashboard } = require('./services/dashboardService');
 const { query } = require('./db');
 const { findUserByEmail, registerSchoolAdmin, createInvitation, findInvitation, acceptInvitation, verifyPassword, getRoleLabel, getDashboardPath, canAccess, requireAuth, requirePermission, roleLabels } = require('./auth');
@@ -29,6 +30,10 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
+  store: new pgSession({
+    pool,
+    createTableIfMissing: true,
+  }),
   secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
