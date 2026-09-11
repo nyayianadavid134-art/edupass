@@ -191,11 +191,22 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
       const students = await query(`SELECT id, full_name, student_number FROM students WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY full_name`, [organizationId]);
       return { records: result.rows, students: students.rows };
     }
-    if (workspace === 'books' || workspace === 'book-categories' || workspace === 'borrowing' || workspace === 'returns') {
+    if (workspace === 'books' || workspace === 'book-categories') {
       const result = workspace === 'book-categories'
         ? await query(`SELECT name, created_at FROM book_categories WHERE organization_id = $1 ORDER BY name`, [organizationId])
         : await query(`SELECT b.title, b.author, b.isbn, b.copies_total, b.copies_available, c.name AS category_name FROM books b LEFT JOIN book_categories c ON c.id = b.category_id WHERE b.organization_id = $1 ORDER BY b.title`, [organizationId]);
       return { records: result.rows };
+    }
+    if (workspace === 'borrowing' || workspace === 'returns') {
+      const result = await query(`SELECT l.id, b.title, COALESCE(s.full_name, u.full_name) AS borrower_name, l.issued_at, l.due_at, l.returned_at FROM book_loans l JOIN books b ON b.id = l.book_id LEFT JOIN students s ON s.id = l.borrower_student_id LEFT JOIN users u ON u.id = l.borrower_user_id WHERE l.organization_id = $1 AND ${workspace === 'returns' ? 'l.returned_at IS NOT NULL' : 'l.returned_at IS NULL'} ORDER BY l.issued_at DESC`, [organizationId]);
+      const books = await query(`SELECT id, title, copies_available FROM books WHERE organization_id = $1 AND copies_available > 0 ORDER BY title`, [organizationId]);
+      const students = await query(`SELECT id, full_name, student_number FROM students WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY full_name`, [organizationId]);
+      return { records: result.rows, books: books.rows, students: students.rows };
+    }
+    if (workspace === 'payments' || workspace === 'receipts') {
+      const result = await query(`SELECT p.amount, p.payment_method, p.reference, p.paid_at, i.invoice_number FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id WHERE p.organization_id = $1 ORDER BY p.paid_at DESC LIMIT 100`, [organizationId]);
+      const invoices = await query(`SELECT id, invoice_number, balance FROM invoices WHERE organization_id = $1 AND balance > 0 ORDER BY created_at DESC`, [organizationId]);
+      return { records: result.rows, invoices: invoices.rows };
     }
     if (workspace === 'assignments' || workspace === 'assessments' || workspace === 'grades' || workspace === 'timetable') {
       const table = workspace === 'timetable' ? 'timetables' : workspace;
@@ -280,7 +291,7 @@ app.post('/workspace/invitations', requireAuth, requirePermission('users.invite'
 
 app.post('/workspace/:workspace', requireAuth, async (req, res, next) => {
   const permissions = {
-    'book-categories': 'library.books.manage', books: 'library.books.manage', assignments: 'assignments.manage', events: 'events.view', announcements: 'communication.send', 'my-tasks': 'dashboard.staff', vehicles: 'transport.manage', drivers: 'transport.manage', routes: 'transport.manage',
+    'book-categories': 'library.books.manage', books: 'library.books.manage', borrowing: 'library.borrowing.manage', returns: 'library.borrowing.manage', assignments: 'assignments.manage', events: 'events.view', announcements: 'communication.send', 'my-tasks': 'dashboard.staff', vehicles: 'transport.manage', drivers: 'transport.manage', routes: 'transport.manage', payments: 'finance.payments.create', receipts: 'finance.receipts.create',
   };
   const permission = permissions[req.params.workspace];
   if (!permission || !canAccess(req.session.user.role, permission)) return res.status(403).render('forbidden', { user: req.session.user, permission: permission || 'workspace' });
@@ -313,6 +324,18 @@ app.post('/workspace/:workspace', requireAuth, async (req, res, next) => {
         break;
       case 'routes':
         await query('INSERT INTO routes (organization_id, name, description) VALUES ($1, $2, $3)', [organizationId, req.body.name.trim(), req.body.description || null]);
+        break;
+      case 'borrowing':
+        await query('INSERT INTO book_loans (organization_id, book_id, borrower_student_id, issued_by, due_at) VALUES ($1, $2, $3, $4, $5)', [organizationId, req.body.bookId, req.body.studentId, req.session.user.id, req.body.dueAt]);
+        await query('UPDATE books SET copies_available = copies_available - 1 WHERE id = $1 AND organization_id = $2 AND copies_available > 0', [req.body.bookId, organizationId]);
+        break;
+      case 'returns':
+        await query('UPDATE book_loans SET returned_at = now() WHERE id = $1 AND organization_id = $2 AND returned_at IS NULL', [req.body.loanId, organizationId]);
+        await query('UPDATE books SET copies_available = copies_available + 1 WHERE id = (SELECT book_id FROM book_loans WHERE id = $1) AND organization_id = $2', [req.body.loanId, organizationId]);
+        break;
+      case 'payments':
+        await query('INSERT INTO payments (organization_id, invoice_id, recorded_by, amount, payment_method, reference) VALUES ($1, $2, $3, $4, $5, $6)', [organizationId, req.body.invoiceId, req.session.user.id, Number(req.body.amount), req.body.paymentMethod || null, req.body.reference || null]);
+        await query('UPDATE invoices SET balance = GREATEST(balance - $1, 0), status = CASE WHEN balance - $1 <= 0 THEN \'paid\' ELSE \'part_paid\' END, updated_at = now() WHERE id = $2 AND organization_id = $3', [Number(req.body.amount), req.body.invoiceId, organizationId]);
         break;
       default:
         return res.status(404).render('error', { message: 'That workspace action does not exist.' });
