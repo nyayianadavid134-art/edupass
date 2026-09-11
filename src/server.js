@@ -171,6 +171,47 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
       const result = await query(`SELECT i.invoice_number, i.description, i.amount, i.balance, i.status, s.full_name FROM invoices i LEFT JOIN students s ON s.id = i.student_id WHERE i.organization_id = $1 ORDER BY i.created_at DESC`, [organizationId]);
       return { records: result.rows };
     }
+    if (workspace === 'visitors') {
+      const result = await query(`SELECT v.id, v.full_name, v.phone, v.purpose, v.status, v.checked_in_at, v.checked_out_at, u.full_name AS host_name FROM visitors v LEFT JOIN users u ON u.id = v.host_user_id WHERE v.organization_id = $1 ORDER BY v.created_at DESC LIMIT 100`, [organizationId]);
+      return { records: result.rows };
+    }
+    if (workspace === 'visitor-passes') {
+      const result = await query(`SELECT p.pass_code, p.status, p.issued_at, p.expires_at, v.full_name, v.purpose FROM visitor_passes p JOIN visitors v ON v.id = p.visitor_id WHERE p.organization_id = $1 ORDER BY p.issued_at DESC LIMIT 100`, [organizationId]);
+      const visitors = await query(`SELECT id, full_name FROM visitors WHERE organization_id = $1 AND status <> 'checked_out' ORDER BY full_name`, [organizationId]);
+      return { records: result.rows, visitors: visitors.rows };
+    }
+    if (workspace === 'entry-exit') {
+      const result = await query(`SELECT e.direction, e.reason, e.recorded_at, s.full_name AS student_name, v.full_name AS visitor_name FROM entry_exit_logs e LEFT JOIN students s ON s.id = e.student_id LEFT JOIN visitors v ON v.id = e.visitor_id WHERE e.organization_id = $1 ORDER BY e.recorded_at DESC LIMIT 100`, [organizationId]);
+      const students = await query(`SELECT id, full_name, student_number FROM students WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY full_name`, [organizationId]);
+      const visitors = await query(`SELECT id, full_name FROM visitors WHERE organization_id = $1 AND status <> 'checked_out' ORDER BY full_name`, [organizationId]);
+      return { records: result.rows, students: students.rows, visitors: visitors.rows };
+    }
+    if (workspace === 'emergency-contacts') {
+      const result = await query(`SELECT e.full_name, e.relationship, e.phone, e.email, e.is_primary, s.full_name AS student_name, s.student_number FROM emergency_contacts e JOIN students s ON s.id = e.student_id WHERE e.organization_id = $1 ORDER BY s.full_name, e.full_name`, [organizationId]);
+      const students = await query(`SELECT id, full_name, student_number FROM students WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY full_name`, [organizationId]);
+      return { records: result.rows, students: students.rows };
+    }
+    if (workspace === 'books' || workspace === 'book-categories' || workspace === 'borrowing' || workspace === 'returns') {
+      const result = workspace === 'book-categories'
+        ? await query(`SELECT name, created_at FROM book_categories WHERE organization_id = $1 ORDER BY name`, [organizationId])
+        : await query(`SELECT b.title, b.author, b.isbn, b.copies_total, b.copies_available, c.name AS category_name FROM books b LEFT JOIN book_categories c ON c.id = b.category_id WHERE b.organization_id = $1 ORDER BY b.title`, [organizationId]);
+      return { records: result.rows };
+    }
+    if (workspace === 'assignments' || workspace === 'assessments' || workspace === 'grades' || workspace === 'timetable') {
+      const table = workspace === 'timetable' ? 'timetables' : workspace;
+      const result = await query(`SELECT * FROM ${table} WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100`, [organizationId]);
+      return { records: result.rows };
+    }
+    if (workspace === 'events' || workspace === 'announcements' || workspace === 'messages' || workspace === 'my-tasks') {
+      const table = workspace === 'my-tasks' ? 'tasks' : workspace;
+      const result = await query(`SELECT * FROM ${table} WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100`, [organizationId]);
+      return { records: result.rows };
+    }
+    if (workspace === 'vehicles' || workspace === 'drivers' || workspace === 'routes' || workspace === 'trips' || workspace === 'transport-assignments') {
+      const table = workspace.replace('transport-', '').replace('assignments', 'transport_assignments');
+      const result = await query(`SELECT * FROM ${table} WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100`, [organizationId]);
+      return { records: result.rows };
+    }
     return { records: [] };
   };
   try {
@@ -179,6 +220,40 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.post('/workspace/visitors', requireAuth, requirePermission('visitors.manage'), async (req, res, next) => {
+  try {
+    if (!req.body.fullName || !req.body.purpose) throw new Error('Visitor name and purpose are required.');
+    await query(`INSERT INTO visitors (organization_id, full_name, phone, email, identification_number, purpose, host_user_id, status, checked_in_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'checked_in', now())`, [req.session.user.organizationId, req.body.fullName.trim(), req.body.phone || null, req.body.email || null, req.body.identificationNumber || null, req.body.purpose.trim(), req.body.hostUserId || null]);
+    res.redirect('/workspace/visitors');
+  } catch (error) { next(error); }
+});
+
+app.post('/workspace/visitor-passes', requireAuth, requirePermission('visitors.manage'), async (req, res, next) => {
+  try {
+    if (!req.body.visitorId) throw new Error('Select a visitor.');
+    const passCode = `VP-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
+    await query(`INSERT INTO visitor_passes (organization_id, visitor_id, pass_code, issued_by, expires_at) VALUES ($1, $2, $3, $4, $5)`, [req.session.user.organizationId, req.body.visitorId, passCode, req.session.user.id, req.body.expiresAt || null]);
+    res.redirect('/workspace/visitor-passes');
+  } catch (error) { next(error); }
+});
+
+app.post('/workspace/entry-exit', requireAuth, requirePermission('entry_exit.manage'), async (req, res, next) => {
+  try {
+    if (!req.body.studentId && !req.body.visitorId) throw new Error('Select a student or visitor.');
+    await query(`INSERT INTO entry_exit_logs (organization_id, student_id, visitor_id, recorded_by, direction, reason) VALUES ($1, $2, $3, $4, $5, $6)`, [req.session.user.organizationId, req.body.studentId || null, req.body.visitorId || null, req.session.user.id, req.body.direction, req.body.reason || null]);
+    if (req.body.visitorId) await query(`UPDATE visitors SET status = $1, checked_out_at = CASE WHEN $1 = 'checked_out' THEN now() ELSE checked_out_at END WHERE id = $2 AND organization_id = $3`, [req.body.direction === 'exit' ? 'checked_out' : 'checked_in', req.body.visitorId, req.session.user.organizationId]);
+    res.redirect('/workspace/entry-exit');
+  } catch (error) { next(error); }
+});
+
+app.post('/workspace/emergency-contacts', requireAuth, requirePermission('students.lookup'), async (req, res, next) => {
+  try {
+    if (!req.body.studentId || !req.body.fullName || !req.body.phone) throw new Error('Student, contact name, and phone are required.');
+    await query(`INSERT INTO emergency_contacts (organization_id, student_id, full_name, relationship, phone, email, is_primary) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.session.user.organizationId, req.body.studentId, req.body.fullName.trim(), req.body.relationship || 'Other', req.body.phone.trim(), req.body.email || null, req.body.isPrimary === 'on']);
+    res.redirect('/workspace/emergency-contacts');
+  } catch (error) { next(error); }
 });
 
 app.post('/workspace/students', requireAuth, requirePermission('students.create'), async (req, res, next) => {
