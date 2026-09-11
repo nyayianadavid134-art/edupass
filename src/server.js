@@ -123,7 +123,7 @@ Object.entries(roleDashboards).forEach(([role, dashboard]) => {
   app.get(getDashboardPath(role), requireAuth, requirePermission(dashboard.navigation[0][2]), renderRoleDashboard);
 });
 
-app.get('/workspace/*', requireAuth, (req, res) => {
+app.get('/workspace/*', requireAuth, async (req, res, next) => {
   const workspace = req.params[0];
   const permissionByWorkspace = {
     students: 'students.view', staff: 'staff.view', classes: 'classes.view', academics: 'academics.view', attendance: 'attendance.view',
@@ -173,7 +173,12 @@ app.get('/workspace/*', requireAuth, (req, res) => {
     }
     return { records: [] };
   };
-    loadWorkspace().then((data) => res.render('module', { workspace, ...data, query: req.query, module: { title: workspace.replaceAll('-', ' '), eyebrow: 'AUTHORIZED WORKSPACE', description: `This workspace is scoped to the ${req.session.user.roleLabel.toLowerCase()} role.` }, user: req.session.user, dashboard: roleDashboards[req.session.user.role], canAccess })).catch(next);
+  try {
+    const data = await loadWorkspace();
+    res.render('module', { workspace, ...data, query: req.query, module: { title: workspace.replaceAll('-', ' '), eyebrow: 'AUTHORIZED WORKSPACE', description: `This workspace is scoped to the ${(req.session.user.roleLabel || 'staff').toLowerCase()} role.` }, user: req.session.user, dashboard: roleDashboards[req.session.user.role] || roleDashboards.staff, canAccess });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post('/workspace/students', requireAuth, requirePermission('students.create'), async (req, res, next) => {
