@@ -12,6 +12,7 @@ const { getDashboard } = require('./services/dashboardService');
 const { query } = require('./db');
 const { findUserByEmail, registerSchoolAdmin, createInvitation, findInvitation, acceptInvitation, verifyPassword, getRoleLabel, getDashboardPath, canAccess, requireAuth, requirePermission, roleLabels } = require('./auth');
 const { roleDashboards } = require('./dashboardConfig');
+const { generateStudentId, generateAdmissionNumber, validateStudentPayload, normalizeStudentPayload } = require('./studentService');
 
 const schoolTypes = [
   ['primary', 'Primary school'], ['secondary', 'Secondary school'], ['college', 'College'],
@@ -129,6 +130,41 @@ app.get('/workspace/attendance/scan', requireAuth, requirePermission('attendance
   res.redirect(`/workspace/attendance?studentId=${selected}`);
 });
 
+app.get('/workspace/students/import-template.csv', requireAuth, requirePermission('students.create'), async (req, res) => {
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="student-import-template.csv"');
+  res.send('First Name,Middle Name,Last Name,Gender,Date of Birth,Admission Number,Class,Stream,Parent Name,Parent Phone,Parent Email,Academic Year\nJohn,A.,Doe,Male,2009-11-12,ADM-2026-001,Senior 2,A,Mary Doe,+256700000000,mary@example.com,2026\n');
+});
+
+app.get('/workspace/student-profile/:studentId', requireAuth, async (req, res, next) => {
+  try {
+    const organizationId = req.session.user.organizationId;
+    const { rows } = await query(`
+      SELECT s.*, c.name AS class_name, c.stream AS class_stream, o.school_name, o.city, o.country, o.school_address, o.motto, o.school_logo
+      FROM students s
+      LEFT JOIN classes c ON c.id = s.class_id
+      LEFT JOIN organizations o ON o.id = s.organization_id
+      WHERE s.id = $1 AND s.organization_id = $2 AND s.deleted_at IS NULL
+    `, [req.params.studentId, organizationId]);
+    const student = rows[0];
+    if (!student) return res.status(404).render('error', { message: 'That student record is not available in this school.' });
+    const digitalId = await query(`SELECT * FROM digital_ids WHERE student_id = $1 AND organization_id = $2 ORDER BY created_at DESC LIMIT 1`, [student.id, organizationId]);
+    const parents = await query(`SELECT * FROM parent_students WHERE student_id = $1 AND organization_id = $2 ORDER BY created_at DESC`, [student.id, organizationId]);
+    const documents = await query(`SELECT * FROM student_documents WHERE student_id = $1 AND organization_id = $2 ORDER BY created_at DESC`, [student.id, organizationId]);
+    const attendance = await query(`SELECT attendance_date, status FROM attendance WHERE student_id = $1 AND organization_id = $2 ORDER BY attendance_date DESC LIMIT 10`, [student.id, organizationId]);
+    res.render('student-profile', {
+      student,
+      digitalId: digitalId.rows[0] || null,
+      parents: parents.rows,
+      documents: documents.rows,
+      attendance: attendance.rows,
+      user: req.session.user,
+      dashboard: roleDashboards[req.session.user.role] || roleDashboards.school_admin,
+      canAccess,
+    });
+  } catch (error) { next(error); }
+});
+
 app.get('/workspace/*', requireAuth, async (req, res, next) => {
   const workspace = req.params[0];
   const permissionByWorkspace = {
@@ -156,8 +192,48 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
   const loadWorkspace = async () => {
     const organizationId = req.session.user.organizationId;
     if (workspace === 'students' || workspace === 'my-students' || workspace === 'student-lookup') {
-      const result = await query('SELECT id, full_name, student_number, status FROM students WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY full_name', [organizationId]);
-      return { records: result.rows };
+      let whereClause = 's.organization_id = $1 AND s.deleted_at IS NULL';
+      const params = [organizationId];
+      let paramIndex = 1;
+      if (req.query.search) {
+        paramIndex += 1;
+        whereClause += ` AND (
+          s.full_name ILIKE $${paramIndex}
+          OR s.student_number ILIKE $${paramIndex}
+          OR s.student_id ILIKE $${paramIndex}
+          OR s.admission_number ILIKE $${paramIndex}
+          OR s.parent_name ILIKE $${paramIndex}
+          OR s.parent_phone ILIKE $${paramIndex}
+        )`;
+        params.push(`%${String(req.query.search).trim()}%`);
+      }
+      if (req.query.classId) {
+        paramIndex += 1;
+        whereClause += ` AND s.class_id = $${paramIndex}`;
+        params.push(req.query.classId);
+      }
+      if (req.query.status) {
+        paramIndex += 1;
+        whereClause += ` AND s.status = $${paramIndex}`;
+        params.push(req.query.status);
+      }
+      if (req.query.academicYear) {
+        paramIndex += 1;
+        whereClause += ` AND s.academic_year = $${paramIndex}`;
+        params.push(req.query.academicYear);
+      }
+      const result = await query(`
+        SELECT s.id, s.full_name, s.student_number, s.student_id, s.admission_number, s.status, s.class_id,
+               c.name AS class_name, c.stream AS class_stream, s.academic_year,
+               s.parent_name, s.parent_phone
+        FROM students s
+        LEFT JOIN classes c ON c.id = s.class_id
+        WHERE ${whereClause}
+        ORDER BY s.full_name
+      `, params);
+      const classes = await query(`SELECT id, name, stream, academic_year FROM classes WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name, stream`, [organizationId]);
+      const years = await query(`SELECT DISTINCT academic_year FROM students WHERE organization_id = $1 AND deleted_at IS NULL AND academic_year IS NOT NULL ORDER BY academic_year DESC`, [organizationId]);
+      return { records: result.rows, classes: classes.rows, years: years.rows };
     }
     if (workspace === 'subjects') {
       const result = await query('SELECT id, name, code FROM subjects WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name', [organizationId]);
@@ -324,7 +400,95 @@ app.post('/workspace/emergency-contacts', requireAuth, requirePermission('studen
 });
 
 app.post('/workspace/students', requireAuth, requirePermission('students.create'), async (req, res, next) => {
-  try { await query('INSERT INTO students (organization_id, student_number, full_name) VALUES ($1, $2, $3)', [req.session.user.organizationId, req.body.studentNumber, req.body.fullName]); res.redirect('/workspace/students'); } catch (error) { next(error); }
+  try {
+    const organizationId = req.session.user.organizationId;
+    const payload = validateStudentPayload({
+      firstName: req.body.firstName || req.body.first_name || req.body.fullName?.split(' ')[0],
+      middleName: req.body.middleName || req.body.middle_name,
+      lastName: req.body.lastName || req.body.last_name || req.body.fullName?.split(' ').slice(1).join(' '),
+      gender: req.body.gender,
+      status: req.body.status,
+      classId: req.body.classId || req.body.class_id,
+      studentNumber: req.body.studentNumber || req.body.admissionNumber,
+      academicYear: req.body.academicYear,
+      parentFullName: req.body.parentFullName || req.body.parentName,
+      parentPhone: req.body.parentPhone || req.body.parent_phone,
+      parentEmail: req.body.parentEmail || req.body.parent_email,
+      parentRelationship: req.body.parentRelationship || req.body.relationship,
+      dateOfBirth: req.body.dateOfBirth || req.body.date_of_birth,
+      nationality: req.body.nationality,
+      notes: req.body.notes,
+      photoUrl: req.body.photoUrl,
+    });
+    const classResult = await query('SELECT id, name, stream, academic_year FROM classes WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL LIMIT 1', [payload.classId, organizationId]);
+    if (!classResult.rows[0]) throw new Error('Selected class is invalid or not assigned to this school.');
+
+    const countResult = await query('SELECT COUNT(*)::int AS total FROM students WHERE organization_id = $1 AND deleted_at IS NULL', [organizationId]);
+    const total = Number(countResult.rows[0]?.total || 0) + 1;
+    const studentId = generateStudentId(new Date().getFullYear(), total);
+    const admission = generateAdmissionNumber(new Date().getFullYear(), total);
+    const fullName = `${payload.firstName} ${payload.middleName ? `${payload.middleName} ` : ''}${payload.lastName}`.trim();
+
+    const result = await query(`
+      INSERT INTO students (
+        organization_id, class_id, student_number, student_id, admission_number, full_name,
+        first_name, middle_name, last_name, gender, date_of_birth, nationality, status,
+        academic_year, admission_date, parent_name, parent_phone, parent_email, parent_relationship,
+        notes, photo_url
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      RETURNING id, student_id, admission_number, full_name
+    `, [
+      organizationId,
+      payload.classId,
+      payload.studentNumber || studentId,
+      studentId,
+      admission,
+      fullName,
+      payload.firstName,
+      payload.middleName || null,
+      payload.lastName,
+      payload.gender || 'prefer-not-to-say',
+      payload.dateOfBirth || null,
+      payload.nationality || null,
+      payload.status || 'active',
+      payload.academicYear || new Date().getFullYear(),
+      req.body.admissionDate || new Date().toISOString().slice(0,10),
+      payload.parentFullName || null,
+      payload.parentPhone || null,
+      payload.parentEmail || null,
+      payload.parentRelationship || 'Guardian',
+      payload.notes || null,
+      payload.photoUrl || null,
+    ]);
+
+    if (payload.parentFullName || payload.parentPhone || payload.parentEmail) {
+      const parentUser = await query(`
+        SELECT id FROM users WHERE organization_id = $1 AND lower(email) = lower($2) AND deleted_at IS NULL LIMIT 1
+      `, [organizationId, (payload.parentEmail || '').toLowerCase()]);
+      if (parentUser.rows[0]) {
+        await query(`
+          INSERT INTO parent_students (organization_id, parent_user_id, student_id, relationship)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (parent_user_id, student_id) DO NOTHING
+        `, [organizationId, parentUser.rows[0].id, result.rows[0].id, payload.parentRelationship || 'Guardian']);
+      }
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    await query(`
+      INSERT INTO digital_ids (organization_id, student_id, verification_token_hash, status, issued_at, expires_at)
+      VALUES ($1, $2, $3, 'active', now(), now() + interval '365 days')
+    `, [organizationId, result.rows[0].id, tokenHash]);
+
+    await query(`
+      INSERT INTO audit_logs (organization_id, actor_user_id, action, entity_type, entity_id, metadata)
+      VALUES ($1, $2, 'student.created', 'students', $3, $4)
+    `, [organizationId, req.session.user.id, result.rows[0].id, JSON.stringify({ studentId: result.rows[0].student_id, fullName: result.rows[0].full_name, classId: payload.classId })]);
+
+    res.redirect(`/workspace/student-profile/${result.rows[0].id}`);
+  } catch (error) { next(error); }
 });
 app.post('/workspace/subjects', requireAuth, requirePermission('academics.view'), async (req, res, next) => {
   try { await query('INSERT INTO subjects (organization_id, name, code) VALUES ($1, $2, $3)', [req.session.user.organizationId, req.body.name, req.body.code || null]); res.redirect('/workspace/subjects'); } catch (error) { next(error); }
@@ -334,6 +498,53 @@ app.post('/workspace/digital-ids', requireAuth, requirePermission('digital_ids.c
 });
 app.post('/workspace/attendance', requireAuth, requirePermission('attendance.create'), async (req, res, next) => {
   try { await query(`INSERT INTO attendance (organization_id, student_id, attendance_date, status) VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), $4) ON CONFLICT (student_id, attendance_date) DO UPDATE SET status = EXCLUDED.status, recorded_at = now()`, [req.session.user.organizationId, req.body.studentId, req.body.date || null, req.body.status]); res.redirect('/workspace/attendance'); } catch (error) { next(error); }
+});
+
+app.post('/workspace/student-import', requireAuth, requirePermission('students.create'), async (req, res, next) => {
+  try {
+    const organizationId = req.session.user.organizationId;
+    if (!req.body || !req.body.csvData) throw new Error('Import data is required.');
+    const records = JSON.parse(req.body.csvData || '[]');
+    if (!Array.isArray(records) || !records.length) throw new Error('No student records were provided for import.');
+    let created = 0;
+    let rejected = 0;
+    for (const row of records) {
+      try {
+        const payload = normalizeStudentPayload({
+          firstName: row.firstName || row['First Name'],
+          middleName: row.middleName || row['Middle Name'],
+          lastName: row.lastName || row['Last Name'],
+          gender: row.gender || row.Gender,
+          status: row.status || 'active',
+          academicYear: row.academicYear || row['Academic Year'] || new Date().getFullYear(),
+          classId: row.classId || row.Class,
+          parentFullName: row.parentFullName || row['Parent Name'],
+          parentPhone: row.parentPhone || row['Parent Phone'],
+          parentEmail: row.parentEmail || row['Parent Email'],
+          studentNumber: row.studentNumber || row['Admission Number'],
+        });
+        const classResult = await query('SELECT id FROM classes WHERE organization_id = $1 AND lower(name) = lower($2) AND deleted_at IS NULL LIMIT 1', [organizationId, String(payload.classId || '').trim()]);
+        if (!classResult.rows[0]) {
+          rejected += 1;
+          continue;
+        }
+        validateStudentPayload({ ...payload, classId: classResult.rows[0].id });
+        const total = await query('SELECT COUNT(*)::int AS total FROM students WHERE organization_id = $1 AND deleted_at IS NULL', [organizationId]);
+        const studentId = generateStudentId(new Date().getFullYear(), Number(total.rows[0]?.total || 0));
+        const admissionNumber = generateAdmissionNumber(new Date().getFullYear(), Number(total.rows[0]?.total || 0));
+        const fullName = `${payload.firstName} ${payload.middleName ? `${payload.middleName} ` : ''}${payload.lastName}`.trim();
+        await query(`
+          INSERT INTO students (organization_id, class_id, student_number, student_id, admission_number, full_name, first_name, middle_name, last_name, gender, status, academic_year, parent_name, parent_phone, parent_email, parent_relationship)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          ON CONFLICT (organization_id, student_number) DO NOTHING
+        `, [organizationId, classResult.rows[0].id, payload.studentNumber || studentId, studentId, admissionNumber, fullName, payload.firstName, payload.middleName || null, payload.lastName, payload.gender || 'prefer-not-to-say', payload.status || 'active', payload.academicYear || new Date().getFullYear(), payload.parentFullName || null, payload.parentPhone || null, payload.parentEmail || null, payload.parentRelationship || 'Guardian']);
+        created += 1;
+      } catch (error) {
+        rejected += 1;
+      }
+    }
+    res.redirect(`/workspace/students?imported=${created}&rejected=${rejected}`);
+  } catch (error) { next(error); }
 });
 
 app.post('/workspace/invitations', requireAuth, requirePermission('users.invite'), async (req, res, next) => {

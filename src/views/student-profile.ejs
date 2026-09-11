@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EduPass | Student profile</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-mark">E</span><span>EduPass</span></div>
+        <div class="workspace-label"><%= dashboard.eyebrow %></div>
+        <nav>
+          <% dashboard.navigation.forEach(function(item) { if (canAccess(user.role, item[2])) { %>
+            <a class="nav-item" href="<%= item[1] %>"><span class="nav-dot"></span><%= item[0] %></a>
+          <% } }); %>
+        </nav>
+      </aside>
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">STUDENT PROFILE</p>
+            <h1><%= student.full_name %></h1>
+          </div>
+          <div class="top-actions">
+            <a class="button light-button" href="/workspace/students">Back to students</a>
+            <form method="post" action="/logout"><button class="logout-button" type="submit">Sign out</button></form>
+          </div>
+        </header>
+
+        <section class="profile-header panel">
+          <div class="profile-avatar"><%= student.full_name ? student.full_name.slice(0,1).toUpperCase() : 'S' %></div>
+          <div>
+            <p class="eyebrow light">Student identity</p>
+            <h2><%= student.full_name %></h2>
+            <p><strong><%= student.student_id || student.student_number %></strong> · <%= student.admission_number || 'ADM-' %> · <%= student.class_name || 'Unassigned' %></p>
+          </div>
+          <div class="profile-status"><span class="status-pill"><%= student.status %></span></div>
+        </section>
+
+        <section class="workspace-grid two-up">
+          <div class="panel">
+            <p class="eyebrow">OVERVIEW</p>
+            <ul class="info-list">
+              <li><span>Student ID</span><strong><%= student.student_id || student.student_number %></strong></li>
+              <li><span>Admission no.</span><strong><%= student.admission_number || '—' %></strong></li>
+              <li><span>Class</span><strong><%= student.class_name || 'Unassigned' %> <%= student.class_stream ? student.class_stream : '' %></strong></li>
+              <li><span>Academic year</span><strong><%= student.academic_year || '—' %></strong></li>
+              <li><span>Gender</span><strong><%= student.gender || '—' %></strong></li>
+              <li><span>Nationality</span><strong><%= student.nationality || '—' %></strong></li>
+            </ul>
+          </div>
+          <div class="panel">
+            <p class="eyebrow">DIGITAL ID</p>
+            <% if (digitalId) { %>
+              <ul class="info-list">
+                <li><span>Status</span><strong><%= digitalId.status %></strong></li>
+                <li><span>Issue date</span><strong><%= new Date(digitalId.issued_at).toLocaleDateString() %></strong></li>
+                <li><span>Expiration</span><strong><%= digitalId.expires_at ? new Date(digitalId.expires_at).toLocaleDateString() : 'No expiry' %></strong></li>
+              </ul>
+            <% } else { %>
+              <p class="empty-state">No digital ID has been issued yet.</p>
+            <% } %>
+          </div>
+        </section>
+
+        <section class="workspace-grid two-up">
+          <div class="panel">
+            <p class="eyebrow">PARENTS</p>
+            <% if (parents.length) { %>
+              <ul class="info-list">
+                <% parents.forEach(function(parent) { %>
+                  <li><span><%= parent.relationship || 'Guardian' %></span><strong><%= parent.parent_user_id || 'Linked parent' %></strong></li>
+                <% }); %>
+              </ul>
+            <% } else { %>
+              <p class="empty-state">No parent relationship recorded yet.</p>
+            <% } %>
+          </div>
+          <div class="panel">
+            <p class="eyebrow">ATTENDANCE</p>
+            <% if (attendance.length) { %>
+              <ul class="info-list">
+                <% attendance.forEach(function(entry) { %>
+                  <li><span><%= new Date(entry.attendance_date).toLocaleDateString() %></span><strong><%= entry.status %></strong></li>
+                <% }); %>
+              </ul>
+            <% } else { %>
+              <p class="empty-state">No attendance records yet.</p>
+            <% } %>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

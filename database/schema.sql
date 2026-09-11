@@ -79,12 +79,42 @@ CREATE TABLE IF NOT EXISTS students (
   organization_id uuid NOT NULL REFERENCES organizations(id),
   class_id uuid REFERENCES classes(id),
   student_number varchar(80) NOT NULL,
+  student_id varchar(80),
+  admission_number varchar(80),
   full_name varchar(180) NOT NULL,
-  status varchar(30) NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','graduated','transferred')),
+  first_name varchar(120),
+  middle_name varchar(120),
+  last_name varchar(120),
+  gender varchar(30) DEFAULT 'prefer-not-to-say',
+  date_of_birth date,
+  nationality varchar(80),
+  status varchar(30) NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','transferred','graduated','suspended','archived')),
+  academic_year varchar(20),
+  admission_date date,
+  parent_name varchar(180),
+  parent_phone varchar(40),
+  parent_email varchar(180),
+  parent_relationship varchar(80),
+  photo_url text,
+  notes text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   deleted_at timestamptz,
-  UNIQUE (organization_id, student_number)
+  UNIQUE (organization_id, student_number),
+  UNIQUE (organization_id, student_id),
+  UNIQUE (organization_id, admission_number)
+);
+
+CREATE TABLE IF NOT EXISTS student_documents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id uuid NOT NULL REFERENCES organizations(id),
+  student_id uuid NOT NULL REFERENCES students(id),
+  document_name varchar(180) NOT NULL,
+  file_name varchar(220) NOT NULL,
+  file_type varchar(80),
+  file_size integer,
+  uploaded_by uuid REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS attendance (
@@ -431,6 +461,9 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_students_org ON students(organization_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_students_status ON students(organization_id, status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_students_admission ON students(organization_id, admission_number) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_students_student_id ON students(organization_id, student_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_staff_org ON staff(organization_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_classes_org ON classes(organization_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_subjects_org ON subjects(organization_id) WHERE deleted_at IS NULL;
