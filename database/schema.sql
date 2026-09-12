@@ -59,10 +59,13 @@ CREATE TABLE IF NOT EXISTS classes (
   name varchar(100) NOT NULL,
   stream varchar(100),
   academic_year varchar(20) NOT NULL,
+  is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   deleted_at timestamptz,
   UNIQUE (organization_id, name, stream, academic_year)
 );
+
+ALTER TABLE classes ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS subjects (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

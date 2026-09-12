@@ -14,6 +14,17 @@ const { findUserByEmail, registerSchoolAdmin, createInvitation, findInvitation, 
 const { roleDashboards } = require('./dashboardConfig');
 const { generateStudentId, generateAdmissionNumber, validateStudentPayload, normalizeStudentPayload } = require('./studentService');
 
+async function getActiveClasses(organizationId) {
+  const result = await query(`
+    SELECT c.id, c.name, c.stream, c.academic_year, c.is_active, o.school_type
+    FROM classes c
+    JOIN organizations o ON o.id = c.organization_id AND o.deleted_at IS NULL
+    WHERE c.organization_id = $1 AND c.deleted_at IS NULL AND c.is_active = true
+    ORDER BY c.name, c.stream
+  `, [organizationId]);
+  return result.rows;
+}
+
 const schoolTypes = [
   ['primary', 'Primary school'], ['secondary', 'Secondary school'], ['college', 'College'],
   ['university', 'University'], ['international', 'International school'], ['vocational', 'Vocational / technical school'], ['other', 'Other education organization'],
@@ -231,9 +242,9 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
         WHERE ${whereClause}
         ORDER BY s.full_name
       `, params);
-      const classes = await query(`SELECT id, name, stream, academic_year FROM classes WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name, stream`, [organizationId]);
+      const classes = await getActiveClasses(organizationId);
       const years = await query(`SELECT DISTINCT academic_year FROM students WHERE organization_id = $1 AND deleted_at IS NULL AND academic_year IS NOT NULL ORDER BY academic_year DESC`, [organizationId]);
-      return { records: result.rows, classes: classes.rows, years: years.rows };
+      return { records: result.rows, classes, years: years.rows };
     }
     if (workspace === 'subjects') {
       const result = await query('SELECT id, name, code FROM subjects WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name', [organizationId]);
@@ -322,9 +333,9 @@ app.get('/workspace/*', requireAuth, async (req, res, next) => {
         return { records: result.rows, assessments: assessments.rows, students: students.rows };
       }
       if (workspace === 'timetable') {
-        const classes = await query('SELECT id, name FROM classes WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name', [organizationId]);
+        const classes = await getActiveClasses(organizationId);
         const subjects = await query('SELECT id, name FROM subjects WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name', [organizationId]);
-        return { records: result.rows, classes: classes.rows, subjects: subjects.rows };
+        return { records: result.rows, classes, subjects: subjects.rows };
       }
       return { records: result.rows };
     }
@@ -420,7 +431,13 @@ app.post('/workspace/students', requireAuth, requirePermission('students.create'
       notes: req.body.notes,
       photoUrl: req.body.photoUrl,
     });
-    const classResult = await query('SELECT id, name, stream, academic_year FROM classes WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL LIMIT 1', [payload.classId, organizationId]);
+    const classResult = await query(`
+      SELECT c.id, c.name, c.stream, c.academic_year
+      FROM classes c
+      JOIN organizations o ON o.id = c.organization_id AND o.deleted_at IS NULL
+      WHERE c.id = $1 AND c.organization_id = $2 AND c.deleted_at IS NULL AND c.is_active = true
+      LIMIT 1
+    `, [payload.classId, organizationId]);
     if (!classResult.rows[0]) throw new Error('Selected class is invalid or not assigned to this school.');
 
     const countResult = await query('SELECT COUNT(*)::int AS total FROM students WHERE organization_id = $1 AND deleted_at IS NULL', [organizationId]);
@@ -523,7 +540,13 @@ app.post('/workspace/student-import', requireAuth, requirePermission('students.c
           parentEmail: row.parentEmail || row['Parent Email'],
           studentNumber: row.studentNumber || row['Admission Number'],
         });
-        const classResult = await query('SELECT id FROM classes WHERE organization_id = $1 AND lower(name) = lower($2) AND deleted_at IS NULL LIMIT 1', [organizationId, String(payload.classId || '').trim()]);
+        const classResult = await query(`
+          SELECT c.id
+          FROM classes c
+          JOIN organizations o ON o.id = c.organization_id AND o.deleted_at IS NULL
+          WHERE c.organization_id = $1 AND lower(c.name) = lower($2) AND c.deleted_at IS NULL AND c.is_active = true
+          LIMIT 1
+        `, [organizationId, String(payload.classId || '').trim()]);
         if (!classResult.rows[0]) {
           rejected += 1;
           continue;

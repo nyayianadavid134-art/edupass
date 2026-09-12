@@ -25,10 +25,14 @@
       <label>Student status<select name="status"><option value="active">Active</option><option value="inactive">Inactive</option><option value="transferred">Transferred</option><option value="graduated">Graduated</option><option value="suspended">Suspended</option><option value="archived">Archived</option></select></label>
       <label>Academic year<input name="academicYear" value="2026" required></label>
       <label>Class<select name="classId" required>
-        <option value="" disabled selected>Select class</option>
-        <% (classes || []).forEach(function(classItem) { %>
-          <option value="<%= classItem.id %>"><%= classItem.name %> <%= classItem.stream ? classItem.stream : '' %></option>
-        <% }); %>
+        <% if ((classes || []).length) { %>
+          <option value="" disabled selected>Select active class</option>
+          <% classes.forEach(function(classItem) { %>
+            <option value="<%= classItem.id %>"><%= classItem.name %> <%= classItem.stream ? classItem.stream : '' %></option>
+          <% }); %>
+        <% } else { %>
+          <option value="" disabled selected>No active classes available</option>
+        <% } %>
       </select></label>
       <label>Parent name<input name="parentFullName" placeholder="Mary Doe"></label>
       <label>Parent phone<input name="parentPhone" placeholder="+256700000000"></label>
